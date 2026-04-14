@@ -1641,42 +1641,52 @@ let rec constr2lp coq_ctx ~calldepth ~depth state t =
          let state, t = aux ~depth env state t in
          let state, p = in_elpi_primitive ~depth state (Projection p) in
          state, in_elpi_app ~depth p [|t|]
-    | C.Fix((rargs, focus_idx),(names, typs, bos))
-         when Array.length names = 2 ->
-         (* Bekic encoding: mutual fix with 2 functions → nested single fixes.
-            Given:  fix f0 = F0(f0,f1)  with  f1 = F1(f0,f1)   selecting f_{focus}
-            Encode: fix f_{focus} (self\
-                      let f_{other} (fix f_{other} (self'\ body_{other}))
-                        (other\ body_{focus}))
-            De Bruijn: in original bodies, Rel 1 = names[1], Rel 2 = names[0].
-            We push both into env and convert bodies at depth+2.
-            In the nested structure: outer fix var at depth, let/inner-fix var at depth+1,
-            so bodies at depth+2 see the same constants. *)
-         let other_idx = 1 - focus_idx in
-         (* Convert types at current depth (types don't reference fix vars) *)
-         let state, focused_typ = aux ~depth env state typs.(focus_idx) in
-         let state, other_typ = aux ~depth env state typs.(other_idx) in
-         (* Push both functions into env: names[0] then names[1] *)
-         let env1 = EConstr.push_rel
-           Context.Rel.Declaration.(LocalAssum(names.(0), typs.(0))) env in
-         let env2 = EConstr.push_rel
-           Context.Rel.Declaration.(LocalAssum(names.(1), typs.(1))) env1 in
-         (* Convert both bodies at depth+2 *)
-         let state, focused_bo =
-           aux ~depth:(depth+2) env2 state bos.(focus_idx) in
-         let state, other_bo =
-           aux ~depth:(depth+2) env2 state bos.(other_idx) in
-         (* Build: fix focused (self\ let other (fix other (self'\ other_bo))
-                                        (other\ focused_bo)) *)
-         let inner_fix =
-           in_elpi_fix names.(other_idx) rargs.(other_idx)
-             other_typ other_bo in
+    | C.Fix((rargs, focus_idx),(names, typs, bos)) ->
+         (* Bekic encoding: mutual fix with N functions → nested single fixes.
+            Given: fix f0 = F0(f0,..,fN-1)  with .. with  fN-1 = FN-1(f0,..,fN-1)
+            selecting f_{focus}, encode as:
+              fix f_{focus} (self\
+                let f_{i1} (fix f_{i1} (self'\ .. let-chain .. body_{i1}))
+                  (f_{i1}\ let f_{i2} (..) (f_{i2}\ .. body_{focus})))
+            De Bruijn: in original bodies, Rel k = names[N-k] for k=1..N.
+            We push all N names into env and convert bodies at depth+N.
+            In the nested structure: binders occupy depths d..d+N-1,
+            so bodies at depth+N see the same constants. *)
+         let n = Array.length names in
+         (* Convert all types at current depth (types don't reference fix vars) *)
+         let state, elpi_typs =
+           CArray.fold_left_map (aux ~depth env) state typs in
+         (* Push all functions into env: names[0], then names[1], .. names[N-1] *)
+         let envn = Array.fold_left (fun env i ->
+           EConstr.push_rel
+             Context.Rel.Declaration.(LocalAssum(names.(i), typs.(i))) env
+         ) env (Array.init n Fun.id) in
+         (* Convert all bodies at depth+N *)
+         let state, elpi_bos =
+           CArray.fold_left_map (aux ~depth:(depth+n) envn) state bos in
+         (* Build the nested let-chain for indices [j1; j2; ..] ending with
+            target_bo.  Each jk gets: let f_jk (fix f_jk (self\ chain jk+1..
+            body_jk)) (f_jk\ chain jk+1.. target_bo) *)
+         let rec build_let_chain others target_bo =
+           match others with
+           | [] -> target_bo
+           | j :: rest ->
+             let inner_fix_body = build_let_chain rest elpi_bos.(j) in
+             let inner_fix =
+               in_elpi_fix names.(j) rargs.(j)
+                 elpi_typs.(j) inner_fix_body in
+             let let_body = build_let_chain rest target_bo in
+             in_elpi_let names.(j) inner_fix elpi_typs.(j) let_body
+         in
+         (* Order: focused function is outermost fix, others are let-chained
+            in array order (skipping focused) *)
+         let others = Array.to_list (Array.init n Fun.id)
+           |> List.filter (fun i -> i <> focus_idx) in
          let outer_body =
-           in_elpi_let names.(other_idx) inner_fix other_typ focused_bo in
+           build_let_chain others elpi_bos.(focus_idx) in
          state,
          in_elpi_fix names.(focus_idx) rargs.(focus_idx)
-           focused_typ outer_body
-    | C.Fix _ -> nYI "HOAS for mutual fix with more than 2 functions"
+           elpi_typs.(focus_idx) outer_body
     | C.CoFix _ -> nYI "HOAS for cofix"
     | x -> in_elpi_primitive_value ~depth state x
   in
