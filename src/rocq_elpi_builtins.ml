@@ -4135,6 +4135,46 @@ coq.reduction.lazy.whd_all X Y :-
      !: t)),
   DocAbove);
 
+  MLCode(Pred("coq.term.retype-relevance",
+    CIn(term,"T",
+    COut(term,"T'",
+    Read(proof_context, "Fixes binder relevance marks in T by retyping. Binders whose type lives in SProp get irrelevant marks, others get relevant marks. Falls back to the existing mark on retyping failure."))),
+    (fun t _ ~depth proof_context constraints state ->
+       let sigma = get_sigma state in
+       let env = proof_context.env in
+       let rec fix env t =
+         let open Constr in
+         match EConstr.kind sigma t with
+         | Prod (n, s, b) ->
+             let s = fix env s in
+             let r = try
+               EConstr.ESorts.relevance_of_sort (Retyping.get_sort_of env sigma s)
+             with _ -> n.Context.binder_relevance in
+             let n = { n with Context.binder_relevance = r } in
+             let env = EConstr.push_rel (Context.Rel.Declaration.LocalAssum(n, s)) env in
+             EConstr.mkProd (n, s, fix env b)
+         | Lambda (n, s, b) ->
+             let s = fix env s in
+             let r = try
+               EConstr.ESorts.relevance_of_sort (Retyping.get_sort_of env sigma s)
+             with _ -> n.Context.binder_relevance in
+             let n = { n with Context.binder_relevance = r } in
+             let env = EConstr.push_rel (Context.Rel.Declaration.LocalAssum(n, s)) env in
+             EConstr.mkLambda (n, s, fix env b)
+         | LetIn (n, bo, s, b) ->
+             let s = fix env s in
+             let bo = fix env bo in
+             let r = try
+               EConstr.ESorts.relevance_of_sort (Retyping.get_sort_of env sigma s)
+             with _ -> n.Context.binder_relevance in
+             let n = { n with Context.binder_relevance = r } in
+             let env = EConstr.push_rel (Context.Rel.Declaration.LocalDef(n, bo, s)) env in
+             EConstr.mkLetIn (n, bo, s, fix env b)
+         | _ -> EConstr.map sigma (fix env) t
+       in
+       !: (fix env t))),
+  DocAbove);
+
   LPDoc "-- Coq's conversion strategy tweaks --------------------------";
 
   MLData conversion_strategy;
@@ -4534,6 +4574,29 @@ coq.id->name S N :- coq.string->name S N.
      match Context.binder_name n with
      | Name.Anonymous -> !: "_"
      | Name.Name s -> !: (Id.to_string s))),
+  DocAbove);
+
+  MLData relevance;
+
+  MLCode(Pred("coq.name.relevance",
+    In(name, "Name",
+    Out(relevance, "Relevance",
+    Full(unit_ctx, "gets the relevance of a name"))),
+  (fun n _ ~depth () () state ->
+     let sigma = get_sigma state in
+     let r = EConstr.ERelevance.kind sigma n.Context.binder_relevance in
+     let r = match r with Sorts.RelevanceVar _ -> Sorts.Relevant | r -> r in
+     state, !: r, [])),
+  DocAbove);
+
+  MLCode(Pred("coq.name.set-relevance",
+    In(name, "Name",
+    In(relevance, "Relevance",
+    Out(name, "Name'",
+    Easy "creates a copy of Name with the given Relevance"))),
+  (fun n r _ ~depth ->
+     let r = EConstr.ERelevance.make r in
+     !: { n with Context.binder_relevance = r })),
   DocAbove);
 
   MLCode(Pred("coq.gref->id",

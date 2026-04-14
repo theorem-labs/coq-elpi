@@ -520,6 +520,29 @@ let ast_sort ~loc = function
   | _ -> assert false
 
 
+(* relevance *)
+
+let relevantc  = E.Constants.declare_global_symbol "relevant"
+let irrelevantc = E.Constants.declare_global_symbol "irrelevant"
+
+let relevance : Sorts.relevance API.Conversion.t =
+  let open API.Conversion in let open API.AlgebraicData in declare {
+  ty = TyName "relevance";
+  doc = "Relevance of a binder (relevant for types in Type/Prop, irrelevant for types in SProp)";
+  pp = (fun fmt -> function
+    | Sorts.Relevant -> Format.fprintf fmt "relevant"
+    | Sorts.Irrelevant -> Format.fprintf fmt "irrelevant"
+    | Sorts.RelevanceVar _ -> Format.fprintf fmt "relevant");
+  constructors = [
+    K("relevant","binder is relevant (type lives in Type or Prop)",N,
+      B Sorts.Relevant,
+      M (fun ~ok ~ko -> function Sorts.Relevant -> ok | _ -> ko ()));
+    K("irrelevant","binder is irrelevant (type lives in SProp)",N,
+      B Sorts.Irrelevant,
+      M (fun ~ok ~ko -> function Sorts.Irrelevant -> ok | _ -> ko ()));
+  ]
+} |> API.ContextualConversion.(!<)
+
 let unspec2opt = function Elpi.Builtin.Given x -> Some x | Elpi.Builtin.Unspec -> None
 let opt2unspec = function Some x -> Elpi.Builtin.Given x | None -> Elpi.Builtin.Unspec
 
@@ -1151,8 +1174,12 @@ let in_coq_name ~depth state t =
   match E.look ~depth t with
   | E.CData n when isname n ->
      let an = nameout n in
-     let state, rv = fresh_relevance_variable state in
-     state, { an with Context.binder_relevance = rv }
+     begin match Evd.MiniEConstr.ERelevance.unsafe_to_relevance an.Context.binder_relevance with
+     | Sorts.Relevant | Sorts.Irrelevant -> state, an
+     | Sorts.RelevanceVar _ ->
+        let state, rv = fresh_relevance_variable state in
+        state, { an with Context.binder_relevance = rv }
+     end
   | E.CData n when CD.is_string n ->
      let state, rv = fresh_relevance_variable state in
      let s = CD.to_string n in
@@ -2163,17 +2190,6 @@ and lp2constr ~calldepth syntactic_constraints coq_ctx ~depth state ?(on_ty=fals
   | E.App(c,name,[s;t]) when lamc == c || prodc == c ->
       let state, name = in_coq_fresh_annot_name ~depth ~coq_ctx depth state name in
       let state, s, gl1 = aux ~depth state ~on_ty:true s in
-      (* Infer binder relevance from the type's sort.  Without this,
-         relevance is hardcoded to Relevant, which is wrong for binders
-         whose type lives in SProp (e.g. from the Prop→SProp parametricity
-         mapping).  Fall back to Relevant on any error. *)
-      let name =
-        try
-          let sigma = get_sigma state in
-          let sort = Retyping.get_sort_of coq_ctx.env sigma s in
-          let r = EC.ESorts.relevance_of_sort sort in
-          { name with Context.binder_relevance = r }
-        with _ -> name in
       let coq_ctx = push_coq_ctx_local depth (Context.Rel.Declaration.LocalAssum(name,s)) coq_ctx in
       let state, t, gl2 = aux_lam coq_ctx ~depth state t in
       if lamc == c then state, EC.mkLambda (name,s,t), gl1 @ gl2
@@ -2182,13 +2198,6 @@ and lp2constr ~calldepth syntactic_constraints coq_ctx ~depth state ?(on_ty=fals
       let state, name = in_coq_fresh_annot_name ~depth ~coq_ctx depth state name in
       let state, s, gl1 = aux ~depth state ~on_ty:true s in
       let state, b, gl2 = aux ~depth state b in
-      let name =
-        try
-          let sigma = get_sigma state in
-          let sort = Retyping.get_sort_of coq_ctx.env sigma s in
-          let r = EC.ESorts.relevance_of_sort sort in
-          { name with Context.binder_relevance = r }
-        with _ -> name in
       let coq_ctx = push_coq_ctx_local depth (Context.Rel.Declaration.LocalDef(name,b,s)) coq_ctx in
       let state, t, gl3 = aux_lam coq_ctx ~depth state t in
       if EC.eq_constr (get_sigma state) t (EC.mkRel 1) then

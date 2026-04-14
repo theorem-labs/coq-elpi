@@ -724,3 +724,87 @@ Elpi test_mfix (myodd).
 Elpi test_mfix (f3_0).
 Elpi test_mfix (f3_1).
 Elpi test_mfix (f3_2).
+
+(* -------- Relevance APIs -------- *)
+
+(* SProp type for testing irrelevant binders *)
+Inductive sTrue : SProp := sI.
+Definition sprop_id := fun (x : sTrue) => x.
+Definition nat_to_prop := fun (n : nat) => True.
+
+(* coq.name.relevance: names from Type/Prop binders are relevant *)
+Elpi Query lp:{{
+  coq.locate "nat_to_prop" (const C),
+  coq.env.const C (some Body) _,
+  Body = fun Name _ _,
+  coq.name.relevance Name R,
+  coq.say "nat binder relevance:" R,
+  std.assert! (R = relevant) "nat binder should be relevant".
+}}.
+
+(* coq.name.relevance: names from SProp binders are irrelevant *)
+Elpi Query lp:{{
+  coq.locate "sprop_id" (const C),
+  coq.env.const C (some Body) _,
+  Body = fun Name _ _,
+  coq.name.relevance Name R,
+  coq.say "sTrue binder relevance:" R,
+  std.assert! (R = irrelevant) "sTrue binder should be irrelevant".
+}}.
+
+(* coq.name.set-relevance: explicitly set relevance on a name *)
+Elpi Query lp:{{
+  coq.string->name "x" N0,
+  coq.name.set-relevance N0 irrelevant N1,
+  coq.name.relevance N1 R1,
+  std.assert! (R1 = irrelevant) "set-relevance to irrelevant failed",
+  coq.name.set-relevance N1 relevant N2,
+  coq.name.relevance N2 R2,
+  std.assert! (R2 = relevant) "set-relevance to relevant failed".
+}}.
+
+(* coq.name.set-relevance: irrelevant name preserved through lp2constr round-trip *)
+Elpi Query lp:{{
+  coq.locate "sTrue" (indt ST),
+  coq.string->name "p" N0,
+  coq.name.set-relevance N0 irrelevant N1,
+  T = (fun N1 (global (indt ST)) x\ x),
+  coq.typecheck T _ ok,
+  coq.say "irrelevant lambda:" T.
+}}.
+
+(* coq.term.retype-relevance: fix relevance marks by retyping *)
+Elpi Query lp:{{
+  coq.locate "sTrue" (indt ST),
+  % Build a prod with a wrong (relevant) mark on an SProp binder
+  coq.string->name "p" N0,
+  coq.name.set-relevance N0 relevant Nwrong,
+  Wrong = (prod Nwrong (global (indt ST)) _\ sort prop),
+  % Fix it
+  coq.term.retype-relevance Wrong Fixed,
+  Fixed = prod Nfixed _ _,
+  coq.name.relevance Nfixed R,
+  coq.say "after retype-relevance:" R,
+  std.assert! (R = irrelevant) "retype-relevance should fix SProp binder to irrelevant".
+}}.
+
+(* coq.term.retype-relevance: nested binders *)
+Elpi Query lp:{{
+  coq.locate "sTrue" (indt ST),
+  coq.locate "nat" (indt Nat),
+  coq.string->name "n" Nn,
+  coq.name.set-relevance Nn relevant Nn1,
+  coq.string->name "p" Np,
+  coq.name.set-relevance Np relevant Np1,
+  % forall (n : nat) (p : sTrue), nat
+  T = (prod Nn1 (global (indt Nat)) _\
+        prod Np1 (global (indt ST)) _\
+          global (indt Nat)),
+  coq.term.retype-relevance T T',
+  T' = (prod NnF _ _\ prod NpF _ _\ _),
+  coq.name.relevance NnF Rn,
+  coq.name.relevance NpF Rp,
+  std.assert! (Rn = relevant) "nat binder should stay relevant",
+  std.assert! (Rp = irrelevant) "sTrue binder should become irrelevant",
+  coq.say "nested retype-relevance ok".
+}}.

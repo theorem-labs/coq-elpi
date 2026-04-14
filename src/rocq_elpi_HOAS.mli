@@ -229,6 +229,7 @@ val sort : (Sorts.t,'a conv_context,constraints) ContextualConversion.t
 val global_constant_of_globref : Names.GlobRef.t -> global_constant
 val abbreviation : Globnames.abbreviation Conversion.t
 val implicit_kind : Glob_term.binding_kind Conversion.t
+val relevance : Sorts.relevance Conversion.t
 val collect_term_variables : depth:int -> term -> Names.Id.t list
 type pstring = Pstring.t
 type primitive_value =
