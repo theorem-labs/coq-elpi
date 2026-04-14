@@ -1641,7 +1641,42 @@ let rec constr2lp coq_ctx ~calldepth ~depth state t =
          let state, t = aux ~depth env state t in
          let state, p = in_elpi_primitive ~depth state (Projection p) in
          state, in_elpi_app ~depth p [|t|]
-    | C.Fix _ -> nYI "HOAS for mutual fix"
+    | C.Fix((rargs, focus_idx),(names, typs, bos))
+         when Array.length names = 2 ->
+         (* Bekic encoding: mutual fix with 2 functions → nested single fixes.
+            Given:  fix f0 = F0(f0,f1)  with  f1 = F1(f0,f1)   selecting f_{focus}
+            Encode: fix f_{focus} (self\
+                      let f_{other} (fix f_{other} (self'\ body_{other}))
+                        (other\ body_{focus}))
+            De Bruijn: in original bodies, Rel 1 = names[1], Rel 2 = names[0].
+            We push both into env and convert bodies at depth+2.
+            In the nested structure: outer fix var at depth, let/inner-fix var at depth+1,
+            so bodies at depth+2 see the same constants. *)
+         let other_idx = 1 - focus_idx in
+         (* Convert types at current depth (types don't reference fix vars) *)
+         let state, focused_typ = aux ~depth env state typs.(focus_idx) in
+         let state, other_typ = aux ~depth env state typs.(other_idx) in
+         (* Push both functions into env: names[0] then names[1] *)
+         let env1 = EConstr.push_rel
+           Context.Rel.Declaration.(LocalAssum(names.(0), typs.(0))) env in
+         let env2 = EConstr.push_rel
+           Context.Rel.Declaration.(LocalAssum(names.(1), typs.(1))) env1 in
+         (* Convert both bodies at depth+2 *)
+         let state, focused_bo =
+           aux ~depth:(depth+2) env2 state bos.(focus_idx) in
+         let state, other_bo =
+           aux ~depth:(depth+2) env2 state bos.(other_idx) in
+         (* Build: fix focused (self\ let other (fix other (self'\ other_bo))
+                                        (other\ focused_bo)) *)
+         let inner_fix =
+           in_elpi_fix names.(other_idx) rargs.(other_idx)
+             other_typ other_bo in
+         let outer_body =
+           in_elpi_let names.(other_idx) inner_fix other_typ focused_bo in
+         state,
+         in_elpi_fix names.(focus_idx) rargs.(focus_idx)
+           focused_typ outer_body
+    | C.Fix _ -> nYI "HOAS for mutual fix with more than 2 functions"
     | C.CoFix _ -> nYI "HOAS for cofix"
     | x -> in_elpi_primitive_value ~depth state x
   in
