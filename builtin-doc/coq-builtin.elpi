@@ -1611,6 +1611,11 @@ coq.reduction.lazy.whd_all X Y :-
 % [coq.reduction.eta-contract T Tred] Removes all eta expansions from T
 external func coq.reduction.eta-contract term -> term.
 
+% [coq.term.retype-relevance T T'] Fixes binder relevance marks in T by
+% retyping. Binders whose type lives in SProp get irrelevant marks, others
+% get relevant marks. Falls back to the existing mark on retyping failure.
+external func coq.term.retype-relevance term -> term.
+
 % -- Coq's conversion strategy tweaks --------------------------
 
 % Strategy for conversion test
@@ -1797,6 +1802,19 @@ coq.id->name S N :- coq.string->name S N.
 % [coq.name->id Name Id] tuns a pretty printing hint into a string. This API
 % is for internal use, no guarantee on its behavior.
 external func coq.name->id name -> id.
+
+% Relevance of a binder (relevant for types in Type/Prop, irrelevant for
+% types in SProp)
+kind relevance type.
+external symbol relevant : relevance = "1".  % binder is relevant (type lives in Type or Prop)
+external symbol irrelevant : relevance = "2".  % binder is irrelevant (type lives in SProp)
+
+% [coq.name.relevance Name Relevance] gets the relevance of a name
+external func coq.name.relevance name -> relevance.
+
+% [coq.name.set-relevance Name Relevance Name'] creates a copy of Name with
+% the given Relevance
+external func coq.name.set-relevance name, relevance -> name.
 
 % [coq.gref->id GR Id] extracts the label (last component of a full kernel
 % name)
