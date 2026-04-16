@@ -206,6 +206,7 @@ val in_elpiast_let : loc:Ast.Loc.t -> annot_name -> ty:Ast.Term.t -> bo:Ast.Term
 val in_elpiast_appl : loc:Ast.Loc.t -> Ast.Term.t -> Ast.Term.t list -> Ast.Term.t
 val in_elpiast_match : loc:Ast.Loc.t -> Ast.Term.t -> Ast.Term.t -> Ast.Term.t list -> Ast.Term.t
 val in_elpiast_fix : loc:Ast.Loc.t -> annot_name -> int -> Ast.Term.t -> Ast.Term.t -> Ast.Term.t
+val in_elpiast_mfix : loc:Ast.Loc.t -> (annot_name * int * Ast.Term.t) list -> int -> Ast.Term.t list -> Ast.Term.t
 val mk_qvar_annot : State.t -> Names.Name.t -> State.t * annot_name
 val in_elpiast_name : loc:Ast.Loc.t -> annot_name -> Ast.Term.t
 val in_elpiast_decl : loc:Ast.Loc.t -> v:Ast.Term.t -> annot_name -> ty:Ast.Term.t -> Ast.Term.t
